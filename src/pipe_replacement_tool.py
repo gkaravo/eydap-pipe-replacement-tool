@@ -1,11 +1,13 @@
 import PySimpleGUI as sg
 from src.utils import *
 import os
+import sys
 from src.tools import *
 import ctypes
 import platform
 import warnings
 from typing import List
+from src.scenarios import Scenario
 
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -15,14 +17,16 @@ if platform.system() == "Windows":
 
 
 class PipeReplacementTool:
+
     def __init__(self):
+        self.active_scen = Scenario.get_active()
         self.layout = [
             [
                 sg.Menu(
                     [
                         [
-                            "Projects",
-                            ["New Project", "---", "Exit"],
+                            "Scenarios",
+                            ["New", "Open...", "Save As...", "Delete", "---", "Exit"],
                         ],
                         [
                             "Help",
@@ -30,8 +34,8 @@ class PipeReplacementTool:
                         ]
                     ]
                 ),
-                [ sg.Text("Welcome to the Pipe Replacement Tool", font=("Arial", 20, "bold"))],
-                [ sg.Text("Please create a new project to start", font=("Arial", 12, "bold"))],
+                [ sg.Text("Welcome to the Pipe Replacement Tool", font=("Arial", 18, "bold"))],
+                [ sg.Text("%s"%self.active_scen.short_name if self.active_scen else "No active scenario", key="-ACTIVE_SCENARIO-", font=("Arial", 12, "bold"))],
                 # Lets load EYDAP logo]
                 [sg.Column([[sg.Image(filename="icon.png")]], justification="center")],
                 [sg.Column([[
@@ -40,12 +44,9 @@ class PipeReplacementTool:
                     sg.Button("Step 3", disabled=True, key="-STEP3-"),
                     sg.Button("Step 4", disabled=True, key="-STEP4-"),
                     ]], justification="center")],
-    
+
             ]
         ]
-
-        self.step1_completed = False
-        self.step2_completed = False
 
         self.window = sg.Window(
             "EYDAP :: Pipe Replacement Tool",
@@ -53,10 +54,13 @@ class PipeReplacementTool:
             resizable=False,
             finalize=True,
             icon="icon.ico",
+            size=(sg.Window.get_screen_size())  # Open the window in maximized mode
         )
 
-        self.projects_folder = os.path.join(os.path.expanduser("~"), "Pipe Replacement Tool Projects")
+        self.step1_completed = False
+        self.step2_completed = False
 
+        self.projects_folder = os.path.join(os.path.expanduser("~"), "Pipe Replacement Tool Projects")
         self.const_pipe_materials = {"Asbestos Cement": 50, "Steel": 40, "PVC": 30, "HDPE": 12, "Cast iron": 40}
 
         self.project_name = None
@@ -77,22 +81,58 @@ class PipeReplacementTool:
 
         self.step1_result_shapefile = None
 
+
+
+
+    def update_active_scenario_display(self):
+        """ Update the active scenario display in the GUI. """
+        active_scenario = Scenario.get_active()
+        self.window["-ACTIVE_SCENARIO-"].update(active_scenario.short_name if active_scenario else "No active scenario")
+
+
+
     def run(self):
+
+        if self.active_scen:
+            Scenario.set_active(self.active_scen.scenario_id)
+            if self.active_scen.status == 1:  # Initialised
+                self.window["-STEP1-"].update(disabled=False)
+
         sg.set_options(icon="icon.ico")
         while True:
             event, values = self.window.read()
             if event == sg.WINDOW_CLOSED:
                 break
-            
-            if event == "New Project":
-                self.create_new_project()
+
+            if event == "New":
+                Scenario.create(self)
+                self.update_active_scenario_display()
+
+            if event == "Open...":
+                Scenario.list()
+                self.update_active_scenario_display()
+
+            if event == "Save As...":
+                scen = Scenario.get_active()
+                if scen:
+                    new_scen = scen.save_as()
+                    if new_scen:
+                        self.update_active_scenario_display()
+
+            if event == "Delete":
+                scen = Scenario.get_active()
+                if scen:
+                    short_name = scen.short_name
+                    if sg.popup_yes_no(f"Are you sure you want to delete the scenario '{short_name}'?") == "Yes":
+                        scen.delete()
+                        self.update_active_scenario_display()
 
             if event == "About":
                 sg.popup("Pipe Replacement Tool", "Version 1.0", "Developed by NTUA - UWMH", "2024")
-                
+
             if event == "Contact Us":
                 sg.popup("For any questions or issues, please contact us at:", "email: pdimas@mail.ntua.gr")
-                            
+
 
             if self.network_shapefile and self.damage_shapefile:
                 self.window["-STEP1-"].update(disabled=False)
@@ -116,6 +156,7 @@ class PipeReplacementTool:
                 break
 
         self.window.close()
+        sys.exit()  # Ensure the script exits
 
     def step1(self):
         layout = [
@@ -188,13 +229,12 @@ class PipeReplacementTool:
                 else:
                     step1_window["-CALC Message-"].update(visible=True)
                     step1_window.refresh()
-
                     step1_window.perform_long_operation(
                         lambda: self.step1_calculations(
                             closeness_weight,
                             betweenness_weight,
                             bridge_weight,
-                            os.path.join(self.projects_folder, self.project_name, ""),
+                            self.projects_folder,
                         ),
                         "-STEP1 CALCULATIONS-",
                     )
@@ -239,7 +279,6 @@ class PipeReplacementTool:
         )
         output_path = os.path.join(
             self.projects_folder,
-            self.project_name,
             "shp_with_metrics",
             "Pipes_WG_export_with_metrics.shp",
         )
@@ -360,14 +399,12 @@ class PipeReplacementTool:
                     os.makedirs(
                         os.path.join(
                             self.projects_folder,
-                            self.project_name,
                             "Fishnet_Grids",
                         ),
                         exist_ok=True,
                     )
                     output_path = os.path.join(
                         self.projects_folder,
-                        self.project_name,
                         "Fishnet_Grids",
                         "",
                     )
@@ -419,7 +456,6 @@ class PipeReplacementTool:
 
                 self.path_fishnet = os.path.join(
                     self.projects_folder,
-                    self.project_name,
                     "Fishnet_Grids",
                     f"{self.select_square_size}_fishnets_sorted.shp",
                 )
@@ -472,7 +508,6 @@ class PipeReplacementTool:
         os.makedirs(
             os.path.join(
                 self.projects_folder,
-                self.project_name,
                 "Cell_optimization_results",
             ),
             exist_ok=True,
@@ -571,7 +606,6 @@ class PipeReplacementTool:
                         os.makedirs(
                             os.path.join(
                                 self.projects_folder,
-                                self.project_name,
                                 "Cell_optimization_results",
                                 f"Cell_Priority_{row_number_to_keep}",
                             ),
@@ -625,7 +659,7 @@ class PipeReplacementTool:
 
             if event == "-OPTIMIZATION-":
                 res = values["-OPTIMIZATION-"]
-    
+
                 print("Optimization finished. You can close this window and proceed to the next step.")
                 X = res.X
                 F = res.F
@@ -635,7 +669,6 @@ class PipeReplacementTool:
 
                 pre_path = os.path.join(
                     self.projects_folder,
-                    self.project_name,
                     "Cell_optimization_results",
                     f"Cell_Priority_{row_number_to_keep}",
                 )
@@ -786,7 +819,6 @@ class PipeReplacementTool:
                 shp_name = values["-Shape File Name-"]
                 shp_file_path = os.path.join(
                     self.projects_folder,
-                    self.project_name,
                     "Cell_optimization_results",
                     f"Cell_Priority_{row_number_to_keep}",
                     f"{shp_name}.shp",
@@ -795,7 +827,6 @@ class PipeReplacementTool:
 
                 text_filename = os.path.join(
                     self.projects_folder,
-                    self.project_name,
                     "Cell_optimization_results",
                     f"Cell_Priority_{row_number_to_keep}",
                     f"{shp_name}.txt",
@@ -843,11 +874,10 @@ class PipeReplacementTool:
                 if is_valid_project_name(project_name):
                     new_project_window.close()
 
-                    project_folder = os.path.join(self.projects_folder, project_name)
-                    os.makedirs(project_folder, exist_ok=True)
+                    os.makedirs(self.project_folder, exist_ok=True)
 
-                    self.network_shapefile = copy_shapefile("network", network_shapefile_path, project_folder)
-                    self.damage_shapefile = copy_shapefile("damage", damage_shapefile_path, project_folder)
+                    self.network_shapefile = copy_shapefile("network", network_shapefile_path, self.project_folder)
+                    self.damage_shapefile = copy_shapefile("damage", damage_shapefile_path, self.project_folder)
 
                 else:
                     sg.popup("Invalid project name. Please try again.")

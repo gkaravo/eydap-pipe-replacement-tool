@@ -1,3 +1,10 @@
+# Ignore everything in the scenarios directory
+/scenarios/*
+# But do not ignore the (empty) scenarios directory itself
+!/scenarios/
+# Do not ignore the .gitkeep file inside the scenarios directory
+!/scenarios/.gitkeep
+
 build
 dist
 .idea
